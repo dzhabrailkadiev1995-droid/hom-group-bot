@@ -1,0 +1,5 @@
+memories/
+leads.json
+user_memory.json
+*.log
+__pycache__/
