@@ -196,7 +196,7 @@ SYSTEM = """Ты — дружелюбный помощник строитель�
 Твоя задача — пообщаться с клиентом и собрать заявку.
 
 Правила общения:
-- Если клиент написал "Салам" или "Ассаламу алайкум" — отвечай "Ва алайкум ассалам!" и представляйся
+- Если клиент написал "Салам", "Ассаламу алайкум" или любое приветствие с саламом — отвечай полным салямом: "Ва алайкум асСалам ва рохматулЛахи ва баракатух!" и представляйся
 - Если "Привет" или "Здравствуйте" — отвечай соответственно, тепло и дружелюбно
 - Будь живым, не роботом — короткие фразы, без официоза
 - Задавай по одному вопросу за раз
@@ -215,6 +215,8 @@ SYSTEM = """Ты — дружелюбный помощник строитель�
 
 Дополнительно:
 - Если спрашивают цены — используй get_services
+- Если клиент спрашивает про рассрочку — отвечай: "К сожалению, рассрочку мы не предоставляем. Работаем по предоплате и поэтапной оплате по договору."
+- В конце каждого диалога, когда заявка сохранена — добавляй: "Также подписывайся на наш Telegram канал, там много полезного о строительстве и ремонте 👉 @HoomGroup"
 - Если клиент спрашивает что входит в стоимость ремонта (базовый, стандарт или премиум) — используй get_services и в конце ответа добавь точно эту строку на отдельной строке: [[RENOVATION_BUTTON]]
 - В начале разговора загружай память (recall)
 - Сохраняй данные по ходу (remember)"""
@@ -242,7 +244,8 @@ def process_message(user_id, username, tg_username, user_text):
             max_tokens=1024,
             system=SYSTEM,
             tools=tools,
-            messages=messages
+            messages=messages,
+            timeout=120
         )
 
         if response.stop_reason == "tool_use":
@@ -273,7 +276,9 @@ def process_message(user_id, username, tg_username, user_text):
             messages.append({"role": "user", "content": tool_results})
 
         else:
-            answer = response.content[0].text
+            answer = "".join(b.text for b in response.content if hasattr(b, "text")).strip()
+            if not answer:
+                answer = "Извини, я что-то завис. Напиши ещё раз 🙏"
             messages.append({"role": "assistant", "content": answer})
             if len(messages) > 30:
                 user_sessions[user_id] = messages[-30:]
@@ -313,5 +318,7 @@ if __name__ == "__main__":
                 print(f"✅ {answer[:70]}...")
 
         except Exception as e:
-            print(f"⚠️ {e}")
+            import traceback
+            print(f"⚠️ {type(e).__name__}: {e}")
+            traceback.print_exc()
             time.sleep(3)

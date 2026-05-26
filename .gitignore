@@ -3,3 +3,4 @@ leads.json
 user_memory.json
 *.log
 __pycache__/
+.env
