@@ -241,7 +241,7 @@ def process_message(user_id, username, tg_username, user_text):
     while True:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
+            max_tokens=4096,
             system=SYSTEM,
             tools=tools,
             messages=messages,
@@ -278,6 +278,7 @@ def process_message(user_id, username, tg_username, user_text):
         else:
             answer = "".join(b.text for b in response.content if hasattr(b, "text")).strip()
             if not answer:
+                print(f"⚠️ Пустой ответ. stop_reason={response.stop_reason}, blocks={[type(b).__name__ for b in response.content]}")
                 answer = "Извини, я что-то завис. Напиши ещё раз 🙏"
             messages.append({"role": "assistant", "content": answer})
             if len(messages) > 30:
