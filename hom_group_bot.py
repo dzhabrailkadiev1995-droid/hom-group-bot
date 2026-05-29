@@ -238,7 +238,7 @@ def process_message(user_id, username, tg_username, user_text):
     else:
         messages.append({"role": "user", "content": user_text})
 
-    text_parts = []
+    last_text = ""
 
     while True:
         response = client.messages.create(
@@ -250,9 +250,9 @@ def process_message(user_id, username, tg_username, user_text):
             timeout=120
         )
 
-        for block in response.content:
-            if getattr(block, "type", None) == "text" and block.text.strip():
-                text_parts.append(block.text.strip())
+        current_text = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
+        if current_text:
+            last_text = current_text
 
         if response.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": response.content})
@@ -282,7 +282,7 @@ def process_message(user_id, username, tg_username, user_text):
             messages.append({"role": "user", "content": tool_results})
 
         else:
-            answer = "\n\n".join(text_parts).strip()
+            answer = last_text
             if not answer:
                 print(f"⚠️ Пустой ответ. stop_reason={response.stop_reason}, blocks={[type(b).__name__ for b in response.content]}")
                 answer = "Извини, я что-то завис. Напиши ещё раз 🙏"
