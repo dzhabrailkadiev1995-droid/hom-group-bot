@@ -238,6 +238,8 @@ def process_message(user_id, username, tg_username, user_text):
     else:
         messages.append({"role": "user", "content": user_text})
 
+    text_parts = []
+
     while True:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -247,6 +249,10 @@ def process_message(user_id, username, tg_username, user_text):
             messages=messages,
             timeout=120
         )
+
+        for block in response.content:
+            if getattr(block, "type", None) == "text" and block.text.strip():
+                text_parts.append(block.text.strip())
 
         if response.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": response.content})
@@ -276,7 +282,7 @@ def process_message(user_id, username, tg_username, user_text):
             messages.append({"role": "user", "content": tool_results})
 
         else:
-            answer = "".join(b.text for b in response.content if hasattr(b, "text")).strip()
+            answer = "\n\n".join(text_parts).strip()
             if not answer:
                 print(f"⚠️ Пустой ответ. stop_reason={response.stop_reason}, blocks={[type(b).__name__ for b in response.content]}")
                 answer = "Извини, я что-то завис. Напиши ещё раз 🙏"
