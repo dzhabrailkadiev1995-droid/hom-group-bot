@@ -3,6 +3,7 @@ import requests
 import json
 import os
 import time
+import html
 from datetime import datetime
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
@@ -93,23 +94,32 @@ def save_lead(user_id, username, tg_username, service, city, area, timeline, bud
     return f"Заявка №{lead['id']} сохранена"
 
 def notify_owner(lead):
-    tg = f"@{lead['tg_username']}" if lead['tg_username'] and lead['tg_username'] != "None" else f"ID: {lead['user_id']}"
-    phone_line = f"📞 Телефон: {lead['phone']}\n" if lead['phone'] != "не указан" else ""
+    def e(v):
+        return html.escape(str(v)) if v is not None else ""
+
+    if lead['tg_username'] and lead['tg_username'] != "None":
+        tg = f"@{e(lead['tg_username'])}"
+    else:
+        tg = f"ID: {e(lead['user_id'])}"
+    phone_line = f"📞 Телефон: {e(lead['phone'])}\n" if lead['phone'] != "не указан" else ""
 
     msg = (
-        f"🔔 *Новая заявка №{lead['id']}*\n\n"
-        f"👤 Имя: {lead['name']}\n"
+        f"🔔 <b>Новая заявка №{lead['id']}</b>\n\n"
+        f"👤 Имя: {e(lead['name'])}\n"
         f"💬 Telegram: {tg}\n"
         f"{phone_line}"
-        f"🔧 Услуга: {lead['service']}\n"
-        f"📍 Город: {lead['city']}\n"
-        f"📐 Объём: {lead['area']}\n"
-        f"⏰ Срок: {lead['timeline']}\n"
-        f"💰 Бюджет: {lead['budget']}\n"
-        f"💬 Доп. инфо: {lead['comment']}\n\n"
-        f"🕐 {lead['date']}"
+        f"🔧 Услуга: {e(lead['service'])}\n"
+        f"📍 Город: {e(lead['city'])}\n"
+        f"📐 Объём: {e(lead['area'])}\n"
+        f"⏰ Срок: {e(lead['timeline'])}\n"
+        f"💰 Бюджет: {e(lead['budget'])}\n"
+        f"💬 Доп. инфо: {e(lead['comment'])}\n\n"
+        f"🕐 {e(lead['date'])}"
     )
-    tg_send(OWNER_CHAT_ID, msg)
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        json={"chat_id": OWNER_CHAT_ID, "text": msg, "parse_mode": "HTML"}
+    )
 
 def get_services():
     return {
