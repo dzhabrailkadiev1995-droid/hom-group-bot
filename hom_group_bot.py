@@ -233,10 +233,38 @@ SYSTEM = """Ты — дружелюбный помощник строитель�
 
 user_sessions = {}
 
+def _has_tool_result(content):
+    if not isinstance(content, list):
+        return False
+    for b in content:
+        t = getattr(b, "type", None) if not isinstance(b, dict) else b.get("type")
+        if t == "tool_result":
+            return True
+    return False
+
+def _sanitize_messages(messages):
+    while messages:
+        first = messages[0]
+        if first["role"] == "user" and _has_tool_result(first.get("content")):
+            messages.pop(0)
+            continue
+        break
+    return messages
+
+def _truncate_at_safe_boundary(messages, max_msgs=30):
+    if len(messages) <= max_msgs:
+        return messages
+    for i, m in enumerate(messages):
+        if m["role"] == "user" and isinstance(m.get("content"), str):
+            if len(messages) - i <= max_msgs:
+                return messages[i:]
+    return messages
+
 def process_message(user_id, username, tg_username, user_text):
     if user_id not in user_sessions:
         user_sessions[user_id] = []
 
+    user_sessions[user_id] = _sanitize_messages(user_sessions[user_id])
     messages = user_sessions[user_id]
     tools = build_tools(user_id)
 
@@ -297,8 +325,7 @@ def process_message(user_id, username, tg_username, user_text):
                 print(f"⚠️ Пустой ответ. stop_reason={response.stop_reason}, blocks={[type(b).__name__ for b in response.content]}")
                 answer = "Извини, я что-то завис. Напиши ещё раз 🙏"
             messages.append({"role": "assistant", "content": answer})
-            if len(messages) > 30:
-                user_sessions[user_id] = messages[-30:]
+            user_sessions[user_id] = _truncate_at_safe_boundary(messages, max_msgs=30)
             return answer
 
 if __name__ == "__main__":
@@ -324,7 +351,12 @@ if __name__ == "__main__":
                 print(f"📩 {username} (@{tg_username}): {text}")
                 tg_typing(chat_id)
 
-                answer = process_message(user_id, username, tg_username, text)
+                try:
+                    answer = process_message(user_id, username, tg_username, text)
+                except anthropic.BadRequestError as e:
+                    print(f"⚠️ BadRequest, сбрасываю сессию {user_id}: {e}")
+                    user_sessions[user_id] = []
+                    answer = process_message(user_id, username, tg_username, text)
 
                 if "[[RENOVATION_BUTTON]]" in answer:
                     clean = answer.replace("[[RENOVATION_BUTTON]]", "").strip()
