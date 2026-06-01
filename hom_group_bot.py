@@ -100,7 +100,7 @@ def notify_owner(lead):
     if lead['tg_username'] and lead['tg_username'] != "None":
         tg = f"@{e(lead['tg_username'])}"
     else:
-        tg = f"ID: {e(lead['user_id'])}"
+        tg = f'<a href="tg://user?id={e(lead["user_id"])}">Открыть чат</a>'
     phone_line = f"📞 Телефон: {e(lead['phone'])}\n" if lead['phone'] != "не указан" else ""
 
     msg = (
