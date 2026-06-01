@@ -64,6 +64,38 @@ def recall(user_id):
     m = load_memory(user_id)
     return m if m else "Новый клиент"
 
+def update_last_lead_phone(user_id, phone):
+    if not os.path.exists(LEADS_FILE):
+        return None
+    with open(LEADS_FILE, encoding="utf-8") as f:
+        leads = json.load(f)
+    for lead in reversed(leads):
+        if lead["user_id"] == user_id:
+            old = lead.get("phone", "не указан")
+            lead["phone"] = phone
+            with open(LEADS_FILE, "w", encoding="utf-8") as f:
+                json.dump(leads, f, ensure_ascii=False, indent=2)
+            return (lead, old)
+    return None
+
+
+def notify_owner_phone_added(lead, old_phone):
+    def e(v):
+        return html.escape(str(v)) if v is not None else ""
+    msg = (
+        f"📞 <b>Клиент по заявке №{lead['id']} поделился телефоном</b>\n\n"
+        f"👤 Имя: {e(lead['name'])}\n"
+        f"📞 Телефон: <code>{e(lead['phone'])}</code>\n"
+        f"🔧 Услуга: {e(lead['service'])}\n"
+        f"📍 Город: {e(lead['city'])}\n"
+        f"📐 Объём: {e(lead['area'])}"
+    )
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        json={"chat_id": OWNER_CHAT_ID, "text": msg, "parse_mode": "HTML"}
+    )
+
+
 def save_lead(user_id, username, tg_username, service, city, area, timeline, budget, phone="не указан", comment=""):
     leads = []
     if os.path.exists(LEADS_FILE):
@@ -100,7 +132,8 @@ def notify_owner(lead):
     if lead['tg_username'] and lead['tg_username'] != "None":
         tg = f"@{e(lead['tg_username'])}"
     else:
-        tg = f'<a href="tg://user?id={e(lead["user_id"])}">Открыть чат</a>'
+        uid = e(lead['user_id'])
+        tg = f'<a href="tg://user?id={uid}">Открыть чат</a> · ID <code>{uid}</code>'
     phone_line = f"📞 Телефон: {e(lead['phone'])}\n" if lead['phone'] != "не указан" else ""
 
     msg = (
@@ -178,7 +211,7 @@ def build_tools(user_id):
         },
         {
             "name": "save_lead",
-            "description": "Сохраняет заявку и уведомляет владельца. Вызывай только когда собраны: услуга, город, объём, срок и бюджет.",
+            "description": "Сохраняет заявку и уведомляет владельца. Вызывай ТОЛЬКО когда собраны ВСЕ обязательные данные: услуга, город, объём, срок, бюджет И телефон. Без телефона не вызывай — менеджер не сможет связаться.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -187,10 +220,10 @@ def build_tools(user_id):
                     "area":         {"type": "string"},
                     "timeline":     {"type": "string"},
                     "budget":       {"type": "string"},
-                    "phone":        {"type": "string", "description": "Телефон если клиент дал, иначе 'не указан'"},
+                    "phone":        {"type": "string", "description": "Номер телефона клиента. Обязательное поле — без него не сохранять заявку."},
                     "comment":      {"type": "string", "description": "Любая дополнительная информация"}
                 },
-                "required": ["service", "city", "area", "timeline", "budget"]
+                "required": ["service", "city", "area", "timeline", "budget", "phone"]
             }
         },
         {
@@ -219,8 +252,15 @@ SYSTEM = """Ты — дружелюбный помощник строитель�
 - Площадь или объём работ
 - Когда планирует / срок
 - Бюджет (если откажется назвать — запиши "не указан", не настаивай)
+- Телефон — ОБЯЗАТЕЛЬНОЕ ПОЛЕ, без него не сохраняй заявку
 
-Когда все данные собраны → сохрани заявку (save_lead) → скажи:
+Телефон — главное правило:
+- Спрашивай телефон в конце, после всех остальных данных
+- Если клиент не даёт — мягко объясни: "Без номера менеджер не сможет связаться. Поделись пожалуйста — никто звонить без твоего ответа не будет"
+- Если всё равно отказывается — попроси хотя бы способ связи (WhatsApp, ник Telegram если хочет)
+- НЕ ВЫЗЫВАЙ save_lead без телефона или альтернативного контакта
+
+Когда все данные включая телефон собраны → сохрани заявку (save_lead) → скажи:
 "Отлично! Передал заявку менеджеру, свяжутся с тобой в ближайшее время 🤝"
 
 Дополнительно:
@@ -339,7 +379,27 @@ if __name__ == "__main__":
             for update in updates:
                 offset = update["update_id"] + 1
                 msg = update.get("message", {})
-                if not msg or "text" not in msg:
+                if not msg:
+                    continue
+
+                if "contact" in msg:
+                    contact = msg["contact"]
+                    phone = contact.get("phone_number", "")
+                    user_id = msg["from"]["id"]
+                    chat_id = msg["chat"]["id"]
+                    if phone:
+                        remember(user_id, "phone", phone)
+                        result = update_last_lead_phone(user_id, phone)
+                        if result:
+                            lead, old_phone = result
+                            notify_owner_phone_added(lead, old_phone)
+                            print(f"📞 Телефон от {user_id}: {phone} → заявка №{lead['id']} обновлена")
+                        else:
+                            print(f"📞 Телефон от {user_id}: {phone} (не нашёл заявку)")
+                        tg_send(chat_id, "Спасибо! Менеджер свяжется с вами в ближайшее время 🤝")
+                    continue
+
+                if "text" not in msg:
                     continue
 
                 user_id     = msg["from"]["id"]
