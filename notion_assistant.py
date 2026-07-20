@@ -441,10 +441,15 @@ def get_tasks(status_filter: str = "") -> str:
 
 
 def create_task(name: str, task_date: str, label: str = "", status: str = "Нужно сделать") -> str:
+    # поддержка времени: "2026-07-21 14:00" → "2026-07-21T14:00:00+03:00"
+    if " " in task_date:
+        dt_str = task_date.replace(" ", "T") + ":00+03:00"
+    else:
+        dt_str = task_date
     props = {
         "Name":   {"title": [{"type": "text", "text": {"content": name}}]},
         "Status": {"status": {"name": status}},
-        "Date":   {"date": {"start": task_date}}
+        "Date":   {"date": {"start": dt_str}}
     }
     if label:
         props["Метки"] = {"select": {"name": label}}
@@ -452,17 +457,49 @@ def create_task(name: str, task_date: str, label: str = "", status: str = "Ну�
     return f"✅ Задача «{name}» создана на {task_date}" if "id" in r else f"Ошибка: {r.get('message')}"
 
 
-def update_task_status(task_name: str, new_status: str) -> str:
+def find_task_id(task_name: str):
     r = n_post(f"databases/{DB_TASKS}/query", {})
-    task_id = None
-    task_title = ""
     for p in r.get("results", []):
         nm = title_of(p["properties"])
         if task_name.lower() in nm.lower():
-            task_id = p["id"]; task_title = nm; break
+            return p["id"], nm
+    return None, None
+
+
+def update_task_status(task_name: str, new_status: str) -> str:
+    task_id, task_title = find_task_id(task_name)
     if not task_id: return f"Задача «{task_name}» не найдена"
     n_patch(f"pages/{task_id}", {"properties": {"Status": {"status": {"name": new_status}}}})
     return f"✅ «{task_title}» → {new_status}"
+
+
+def update_task_date(task_name: str, new_date: str) -> str:
+    """new_date: YYYY-MM-DD или YYYY-MM-DDTHH:MM:SS+03:00"""
+    task_id, task_title = find_task_id(task_name)
+    if not task_id: return f"Задача «{task_name}» не найдена"
+    # если передано время — форматируем как datetime
+    if " " in new_date:
+        dt_str = new_date.replace(" ", "T") + ":00+03:00"
+    elif "T" in new_date:
+        dt_str = new_date
+    else:
+        dt_str = new_date
+    n_patch(f"pages/{task_id}", {"properties": {"Date": {"date": {"start": dt_str}}}})
+    return f"✅ Дата «{task_title}» → {new_date}"
+
+
+def delete_task(task_name: str) -> str:
+    task_id, task_title = find_task_id(task_name)
+    if not task_id: return f"Задача «{task_name}» не найдена"
+    r = n_patch(f"pages/{task_id}", {"archived": True})
+    return f"✅ «{task_title}» удалена" if r.get("archived") else f"Ошибка: {r.get('message')}"
+
+
+def update_task_name(old_name: str, new_name: str) -> str:
+    task_id, task_title = find_task_id(old_name)
+    if not task_id: return f"Задача «{old_name}» не найдена"
+    n_patch(f"pages/{task_id}", {"properties": {"Name": {"title": [{"type": "text", "text": {"content": new_name}}]}}})
+    return f"✅ «{task_title}» переименована в «{new_name}»"
 
 
 # ─── Claude tools ──────────────────────────────────────────────────────────────
@@ -489,6 +526,9 @@ TOOLS = [
     {"name": "get_tasks",              "description": "Получить задачи из доски Планы и задачи",                            "input_schema": {"type":"object","properties":{"status_filter":{"type":"string","description":"Фильтр по статусу, например: Нужно сделать / В процессе / Готово"}},"required":[]}},
     {"name": "create_task",            "description": "Создать новую задачу в доске Планы и задачи",                       "input_schema": {"type":"object","properties":{"name":{"type":"string"},"task_date":{"type":"string","description":"YYYY-MM-DD"},"label":{"type":"string"},"status":{"type":"string"}},"required":["name","task_date"]}},
     {"name": "update_task_status",     "description": "Обновить статус задачи в доске Планы и задачи",                    "input_schema": {"type":"object","properties":{"task_name":{"type":"string"},"new_status":{"type":"string"}},"required":["task_name","new_status"]}},
+    {"name": "update_task_date",       "description": "Изменить дату/время задачи. Формат: YYYY-MM-DD или YYYY-MM-DD HH:MM","input_schema": {"type":"object","properties":{"task_name":{"type":"string"},"new_date":{"type":"string"}},"required":["task_name","new_date"]}},
+    {"name": "delete_task",            "description": "Удалить задачу из доски Планы и задачи",                            "input_schema": {"type":"object","properties":{"task_name":{"type":"string"}},"required":["task_name"]}},
+    {"name": "update_task_name",       "description": "Переименовать задачу",                                               "input_schema": {"type":"object","properties":{"old_name":{"type":"string"},"new_name":{"type":"string"}},"required":["old_name","new_name"]}},
 ]
 
 TOOL_FN = {
@@ -513,6 +553,9 @@ TOOL_FN = {
     "get_tasks":              lambda i: get_tasks(i.get("status_filter", "")),
     "create_task":            lambda i: create_task(i["name"], i["task_date"], i.get("label",""), i.get("status","Нужно сделать")),
     "update_task_status":     lambda i: update_task_status(i["task_name"], i["new_status"]),
+    "update_task_date":       lambda i: update_task_date(i["task_name"], i["new_date"]),
+    "delete_task":            lambda i: delete_task(i["task_name"]),
+    "update_task_name":       lambda i: update_task_name(i["old_name"], i["new_name"]),
 }
 
 SYSTEM = f"""Ты — Ассистент HOM Group, личный помощник Джабраила Кадиева (руководитель строительной компании, Грозный, Чечня).
