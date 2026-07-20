@@ -682,7 +682,6 @@ def main():
                 continue
 
             log.info(f"← {text[:80]}")
-            tg_send(chat_id, "⏳")
 
             try:
                 reply = ask_claude(chat_id, text)
