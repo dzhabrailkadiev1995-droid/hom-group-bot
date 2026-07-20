@@ -507,24 +507,36 @@ def ask_claude(chat_id: int, user_text: str) -> str:
 # ─── Voice transcription ───────────────────────────────────────────────────────
 
 def transcribe_voice(file_id: str) -> str:
-    if not OPENAI_KEY:
-        return "[голосовые сообщения недоступны: нет OPENAI_API_KEY]"
     try:
-        import openai as oai
-        oai.api_key = OPENAI_KEY
-        # download voice file from Telegram
+        import base64
         info = requests.get(f"{TG_API}/getFile", params={"file_id": file_id}, timeout=15).json()
         file_path = info["result"]["file_path"]
         audio_data = requests.get(f"https://api.telegram.org/file/bot{TG_TOKEN}/{file_path}", timeout=30).content
-        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
-            tmp.write(audio_data)
-            tmp_path = tmp.name
-        with open(tmp_path, "rb") as f:
-            result = oai.audio.transcriptions.create(model="whisper-1", file=f, language="ru")
-        os.unlink(tmp_path)
-        return result.text
+        audio_b64 = base64.standard_b64encode(audio_data).decode("utf-8")
+        resp = claude.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "audio/ogg",
+                            "data": audio_b64
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": "Расшифруй это голосовое сообщение дословно на русском языке. Выведи только текст без пояснений."
+                    }
+                ]
+            }]
+        )
+        return resp.content[0].text
     except Exception as e:
-        log.error(f"Whisper error: {e}")
+        log.error(f"Voice transcription error: {e}")
         return f"[ошибка расшифровки: {e}]"
 
 
