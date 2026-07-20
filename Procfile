@@ -1,1 +1,1 @@
-worker: python hom_group_bot.py
+worker: python notion_assistant.py
