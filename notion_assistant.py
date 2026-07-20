@@ -30,6 +30,7 @@ DB_CLIENTS = "705c1d7c-b038-4518-8339-68d09dcdab3f"
 DB_LEADS   = "3a2e7ba2-798c-81f7-a1d3-f8f867bfeb6c"
 DB_DEALS   = "3a2e7ba2-798c-8193-9898-ed2110b2818c"
 DB_EXPENSES= "30e81b7f-f4b8-4501-8722-927f1bec94ad"
+DB_TASKS   = "3a3e7ba2-798c-8074-a4d0-ee0b345401ea"
 
 PHOTOS_DIR     = Path.home() / "ai-agents/object_photos"
 REMINDERS_FILE = Path(__file__).parent / "reminders.json"
@@ -418,6 +419,52 @@ def check_reminders():
         save_reminders(unsent + sent)
 
 
+# ─── Планы и задачи ────────────────────────────────────────────────────────────
+
+def get_tasks(status_filter: str = "") -> str:
+    body = {"sorts": [{"property": "Date", "direction": "ascending"}]}
+    if status_filter:
+        body["filter"] = {"property": "Status", "status": {"equals": status_filter}}
+    r = n_post(f"databases/{DB_TASKS}/query", body)
+    rows = []
+    for p in r.get("results", []):
+        pr     = p["properties"]
+        name   = title_of(pr)
+        status = (pr.get("Status", {}).get("status") or {}).get("name", "")
+        dt     = date_val(pr, "Date")
+        label  = (pr.get("Метки", {}).get("select") or {}).get("name", "")
+        row    = f"- {dt or '?'} | {name}"
+        if status: row += f" | {status}"
+        if label:  row += f" | {label}"
+        rows.append(row)
+    return "\n".join(rows) if rows else "Задач нет"
+
+
+def create_task(name: str, task_date: str, label: str = "", status: str = "Нужно сделать") -> str:
+    props = {
+        "Name":   {"title": [{"type": "text", "text": {"content": name}}]},
+        "Status": {"status": {"name": status}},
+        "Date":   {"date": {"start": task_date}}
+    }
+    if label:
+        props["Метки"] = {"select": {"name": label}}
+    r = n_post("pages", {"parent": {"database_id": DB_TASKS}, "properties": props})
+    return f"✅ Задача «{name}» создана на {task_date}" if "id" in r else f"Ошибка: {r.get('message')}"
+
+
+def update_task_status(task_name: str, new_status: str) -> str:
+    r = n_post(f"databases/{DB_TASKS}/query", {})
+    task_id = None
+    task_title = ""
+    for p in r.get("results", []):
+        nm = title_of(p["properties"])
+        if task_name.lower() in nm.lower():
+            task_id = p["id"]; task_title = nm; break
+    if not task_id: return f"Задача «{task_name}» не найдена"
+    n_patch(f"pages/{task_id}", {"properties": {"Status": {"status": {"name": new_status}}}})
+    return f"✅ «{task_title}» → {new_status}"
+
+
 # ─── Claude tools ──────────────────────────────────────────────────────────────
 
 TOOLS = [
@@ -438,7 +485,10 @@ TOOLS = [
     {"name": "create_lead",            "description": "Добавить нового лида",                                      "input_schema": {"type":"object","properties":{"client_name":{"type":"string"},"phone":{"type":"string"},"source":{"type":"string"},"object_type":{"type":"string"},"area":{"type":"number"},"budget":{"type":"number"},"comment":{"type":"string"}},"required":["client_name","phone","source","object_type"]}},
     {"name": "get_leads_list",         "description": "Список активных лидов",                                     "input_schema": {"type":"object","properties":{},"required":[]}},
     {"name": "search_notion",          "description": "Поиск по всем базам Notion",                                "input_schema": {"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},
-    {"name": "set_reminder",           "description": "Установить напоминание. Формат даты: YYYY-MM-DD или YYYY-MM-DD HH:MM", "input_schema": {"type":"object","properties":{"text":{"type":"string"},"remind_at":{"type":"string"}},"required":["text","remind_at"]}},
+    {"name": "set_reminder",            "description": "Установить напоминание. Формат даты: YYYY-MM-DD или YYYY-MM-DD HH:MM", "input_schema": {"type":"object","properties":{"text":{"type":"string"},"remind_at":{"type":"string"}},"required":["text","remind_at"]}},
+    {"name": "get_tasks",              "description": "Получить задачи из доски Планы и задачи",                            "input_schema": {"type":"object","properties":{"status_filter":{"type":"string","description":"Фильтр по статусу, например: Нужно сделать / В процессе / Готово"}},"required":[]}},
+    {"name": "create_task",            "description": "Создать новую задачу в доске Планы и задачи",                       "input_schema": {"type":"object","properties":{"name":{"type":"string"},"task_date":{"type":"string","description":"YYYY-MM-DD"},"label":{"type":"string"},"status":{"type":"string"}},"required":["name","task_date"]}},
+    {"name": "update_task_status",     "description": "Обновить статус задачи в доске Планы и задачи",                    "input_schema": {"type":"object","properties":{"task_name":{"type":"string"},"new_status":{"type":"string"}},"required":["task_name","new_status"]}},
 ]
 
 TOOL_FN = {
@@ -460,6 +510,9 @@ TOOL_FN = {
     "get_leads_list":         lambda i: get_leads_list(),
     "search_notion":          lambda i: search_notion(i["query"]),
     "set_reminder":           lambda i: set_reminder(i["text"], i["remind_at"]),
+    "get_tasks":              lambda i: get_tasks(i.get("status_filter", "")),
+    "create_task":            lambda i: create_task(i["name"], i["task_date"], i.get("label",""), i.get("status","Нужно сделать")),
+    "update_task_status":     lambda i: update_task_status(i["task_name"], i["new_status"]),
 }
 
 SYSTEM = f"""Ты — Ассистент HOM Group, личный помощник Джабраила Кадиева (руководитель строительной компании, Грозный, Чечня).
