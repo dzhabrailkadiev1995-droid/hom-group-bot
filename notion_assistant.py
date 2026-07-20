@@ -31,6 +31,7 @@ DB_LEADS   = "3a2e7ba2-798c-81f7-a1d3-f8f867bfeb6c"
 DB_DEALS   = "3a2e7ba2-798c-8193-9898-ed2110b2818c"
 DB_EXPENSES= "30e81b7f-f4b8-4501-8722-927f1bec94ad"
 DB_TASKS   = "3a3e7ba2-798c-8074-a4d0-ee0b345401ea"
+DB_HISTORY = "3a3e7ba2-798c-8113-80de-e789f238b9b3"
 
 PHOTOS_DIR     = Path.home() / "ai-agents/object_photos"
 REMINDERS_FILE = Path(__file__).parent / "reminders.json"
@@ -567,11 +568,51 @@ SYSTEM = f"""Ты — Ассистент HOM Group, личный помощни�
 
 # ─── Claude agent ──────────────────────────────────────────────────────────────
 
+def save_message(chat_id: int, role: str, text: str):
+    try:
+        # Notion title max 2000 chars
+        content = text[:2000] if text else ""
+        n_post("pages", {
+            "parent": {"database_id": DB_HISTORY},
+            "properties": {
+                "Сообщение": {"title": [{"type": "text", "text": {"content": content}}]},
+                "Роль":      {"select": {"name": role}},
+                "Chat ID":   {"number": chat_id}
+            }
+        })
+    except Exception as e:
+        log.error(f"save_message error: {e}")
+
+
+def load_history(chat_id: int, limit: int = 30) -> list:
+    try:
+        r = n_post(f"databases/{DB_HISTORY}/query", {
+            "filter": {"property": "Chat ID", "number": {"equals": chat_id}},
+            "sorts":  [{"property": "Дата", "direction": "descending"}],
+            "page_size": limit
+        })
+        msgs = []
+        for p in reversed(r.get("results", [])):
+            pr   = p["properties"]
+            role = (pr.get("Роль", {}).get("select") or {}).get("name", "user")
+            text = title_of(pr, "Сообщение")
+            if text:
+                msgs.append({"role": role, "content": text})
+        return msgs
+    except Exception as e:
+        log.error(f"load_history error: {e}")
+        return []
+
+
 def ask_claude(chat_id: int, user_text: str) -> str:
+    # Load persistent history from Notion + in-memory recent
     if chat_id not in history:
-        history[chat_id] = []
+        history[chat_id] = load_history(chat_id, limit=30)
+
     history[chat_id].append({"role": "user", "content": user_text})
-    messages = history[chat_id][-20:]
+    save_message(chat_id, "user", user_text)
+
+    messages = history[chat_id][-30:]
 
     for _ in range(6):
         resp = claude.messages.create(
@@ -596,6 +637,7 @@ def ask_claude(chat_id: int, user_text: str) -> str:
         else:
             text = "".join(b.text for b in resp.content if hasattr(b, "text"))
             history[chat_id] = messages + [{"role": "assistant", "content": text}]
+            save_message(chat_id, "assistant", text)
             return text
     return "Не удалось получить ответ"
 
