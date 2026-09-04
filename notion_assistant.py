@@ -422,10 +422,18 @@ def check_reminders():
 
 # ─── Планы и задачи ────────────────────────────────────────────────────────────
 
-def get_tasks(status_filter: str = "") -> str:
-    body = {"sorts": [{"property": "Date", "direction": "ascending"}]}
+def get_tasks(status_filter: str = "", from_today: bool = False) -> str:
+    today = date.today().isoformat()
+    filters = []
     if status_filter:
-        body["filter"] = {"property": "Status", "status": {"equals": status_filter}}
+        filters.append({"property": "Status", "status": {"equals": status_filter}})
+    if from_today:
+        filters.append({"property": "Date", "date": {"on_or_after": today}})
+    body = {"sorts": [{"property": "Date", "direction": "ascending"}]}
+    if len(filters) == 1:
+        body["filter"] = filters[0]
+    elif len(filters) > 1:
+        body["filter"] = {"and": filters}
     r = n_post(f"databases/{DB_TASKS}/query", body)
     rows = []
     for p in r.get("results", []):
@@ -524,7 +532,7 @@ TOOLS = [
     {"name": "get_leads_list",         "description": "Список активных лидов",                                     "input_schema": {"type":"object","properties":{},"required":[]}},
     {"name": "search_notion",          "description": "Поиск по всем базам Notion",                                "input_schema": {"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},
     {"name": "set_reminder",            "description": "Установить напоминание. Формат даты: YYYY-MM-DD или YYYY-MM-DD HH:MM", "input_schema": {"type":"object","properties":{"text":{"type":"string"},"remind_at":{"type":"string"}},"required":["text","remind_at"]}},
-    {"name": "get_tasks",              "description": "Получить задачи из доски Планы и задачи",                            "input_schema": {"type":"object","properties":{"status_filter":{"type":"string","description":"Фильтр по статусу, например: Нужно сделать / В процессе / Готово"}},"required":[]}},
+    {"name": "get_tasks",              "description": "Получить задачи из доски Планы и задачи. Когда пользователь спрашивает о задачах на сегодня или будущее — всегда передавай from_today=true чтобы не показывать старые задачи.", "input_schema": {"type":"object","properties":{"status_filter":{"type":"string","description":"Фильтр по статусу: Нужно сделать / В процессе / Готово"},"from_today":{"type":"boolean","description":"Если true — показывать только задачи от сегодня и вперёд"}},"required":[]}},
     {"name": "create_task",            "description": "Создать новую задачу в доске Планы и задачи",                       "input_schema": {"type":"object","properties":{"name":{"type":"string"},"task_date":{"type":"string","description":"YYYY-MM-DD"},"label":{"type":"string"},"status":{"type":"string"}},"required":["name","task_date"]}},
     {"name": "update_task_status",     "description": "Обновить статус задачи в доске Планы и задачи",                    "input_schema": {"type":"object","properties":{"task_name":{"type":"string"},"new_status":{"type":"string"}},"required":["task_name","new_status"]}},
     {"name": "update_task_date",       "description": "Изменить дату/время задачи. Формат: YYYY-MM-DD или YYYY-MM-DD HH:MM","input_schema": {"type":"object","properties":{"task_name":{"type":"string"},"new_date":{"type":"string"}},"required":["task_name","new_date"]}},
@@ -551,7 +559,7 @@ TOOL_FN = {
     "get_leads_list":         lambda i: get_leads_list(),
     "search_notion":          lambda i: search_notion(i["query"]),
     "set_reminder":           lambda i: set_reminder(i["text"], i["remind_at"]),
-    "get_tasks":              lambda i: get_tasks(i.get("status_filter", "")),
+    "get_tasks":              lambda i: get_tasks(i.get("status_filter", ""), i.get("from_today", False)),
     "create_task":            lambda i: create_task(i["name"], i["task_date"], i.get("label",""), i.get("status","Нужно сделать")),
     "update_task_status":     lambda i: update_task_status(i["task_name"], i["new_status"]),
     "update_task_date":       lambda i: update_task_date(i["task_name"], i["new_date"]),
@@ -559,11 +567,21 @@ TOOL_FN = {
     "update_task_name":       lambda i: update_task_name(i["old_name"], i["new_name"]),
 }
 
-SYSTEM = f"""Ты — Ассистент HOM Group, личный помощник Джабраила Кадиева (руководитель строительной компании, Грозный, Чечня).
-Сегодня: {date.today().isoformat()}
+def get_system():
+    today = date.today().isoformat()
+    return f"""Ты — личный ассистент Джабраила Кадиева, руководителя строительной компании HOM Group (Грозный, Чечня).
 
-Отвечай кратко и по делу. Используй инструменты чтобы читать и обновлять Notion.
-Если не указана дата — уточни. Даты всегда YYYY-MM-DD. Отвечай на русском."""
+СЕГОДНЯ: {today}. Эта дата актуальна и точна — игнорируй любые другие даты из истории переписки.
+
+Твой стиль общения:
+- Говори как живой человек, не как робот и не как корпоративный чат-бот
+- Без казённых фраз, без сухих списков из цифр и дат — подавай информацию через живой текст
+- Можешь добавить короткий комментарий по ситуации: если горит дедлайн — скажи об этом, если всё спокойно — скажи и это
+- Будь кратким, но не сухим. Один абзац лучше пяти пунктов
+- Если данных много — выдели главное, детали по запросу
+- Отвечай на русском, обращайся к Джабраилу по имени только когда это уместно
+
+Используй инструменты чтобы читать и обновлять Notion. Если не указана дата — уточни. Даты всегда YYYY-MM-DD."""
 
 
 # ─── Claude agent ──────────────────────────────────────────────────────────────
@@ -585,23 +603,7 @@ def save_message(chat_id: int, role: str, text: str):
 
 
 def load_history(chat_id: int, limit: int = 30) -> list:
-    try:
-        r = n_post(f"databases/{DB_HISTORY}/query", {
-            "filter": {"property": "Chat ID", "number": {"equals": chat_id}},
-            "sorts":  [{"property": "Дата", "direction": "descending"}],
-            "page_size": limit
-        })
-        msgs = []
-        for p in reversed(r.get("results", [])):
-            pr   = p["properties"]
-            role = (pr.get("Роль", {}).get("select") or {}).get("name", "user")
-            text = title_of(pr, "Сообщение")
-            if text:
-                msgs.append({"role": role, "content": text})
-        return msgs
-    except Exception as e:
-        log.error(f"load_history error: {e}")
-        return []
+    return []
 
 
 def ask_claude(chat_id: int, user_text: str) -> str:
@@ -609,16 +611,18 @@ def ask_claude(chat_id: int, user_text: str) -> str:
     if chat_id not in history:
         history[chat_id] = load_history(chat_id, limit=30)
 
-    history[chat_id].append({"role": "user", "content": user_text})
+    today_str = date.today().strftime("%d.%m.%Y")
+    dated_text = f"[Сегодня: {today_str}]\n{user_text}"
+    history[chat_id].append({"role": "user", "content": dated_text})
     save_message(chat_id, "user", user_text)
 
-    messages = history[chat_id][-30:]
+    messages = history[chat_id][-20:]
 
     for _ in range(6):
         resp = claude.messages.create(
             model="claude-opus-4-7",
             max_tokens=2048,
-            system=SYSTEM,
+            system=get_system(),
             tools=TOOLS,
             messages=messages
         )
@@ -699,12 +703,27 @@ def maybe_morning_briefing():
     last_briefing_day = today
     objects   = get_active_objects()
     deadlines = get_upcoming_deadlines(3)
-    tg_send(OWNER_ID,
-        f"☀️ *Доброе утро, Джабраил!*\n\n"
-        f"*Активные объекты:*\n{objects}\n\n"
-        f"*Ближайшие 3 дня:*\n{deadlines}",
-        parse_mode="Markdown"
+    tasks     = get_tasks("Нужно сделать", from_today=True)
+
+    # Формируем живой брифинг через Claude
+    prompt = (
+        f"Составь короткий утренний брифинг для Джабраила. "
+        f"Говори живо, как помощник который в теме — не списком с датами, а нормальным текстом. "
+        f"Выдели что реально горит в ближайшие 3 дня, остальное коротко. "
+        f"Задачи из раздела 'Планы и задачи' — отдельным блоком, коротко что нужно сделать сегодня. "
+        f"Без лишних приветствий типа 'Доброе утро Джабраил' — сразу по делу, но тепло.\n\n"
+        f"Активные объекты:\n{objects}\n\n"
+        f"Ближайшие 3 дня по объектам:\n{deadlines}\n\n"
+        f"Задачи (Планы и задачи):\n{tasks}"
     )
+    resp = claude.messages.create(
+        model="claude-opus-4-7",
+        max_tokens=1000,
+        system=get_system(),
+        messages=[{"role": "user", "content": prompt}]
+    )
+    text = "".join(b.text for b in resp.content if hasattr(b, "text"))
+    tg_send(OWNER_ID, f"☀️ {text}")
     log.info("Утренний брифинг отправлен")
 
 
@@ -761,7 +780,21 @@ def get_updates(offset=0):
 
 # ─── Main ──────────────────────────────────────────────────────────────────────
 
+PID_FILE = Path(__file__).parent / "notion_assistant.pid"
+
 def main():
+    # Защита от двойного запуска
+    if PID_FILE.exists():
+        old_pid = int(PID_FILE.read_text().strip())
+        try:
+            os.kill(old_pid, 0)
+            log.warning(f"Уже запущен (PID {old_pid}), завершаю старый процесс...")
+            os.kill(old_pid, 9)
+            time.sleep(1)
+        except OSError:
+            pass
+    PID_FILE.write_text(str(os.getpid()))
+
     log.info("HOM Assistant запущен")
     offset = 0
 
