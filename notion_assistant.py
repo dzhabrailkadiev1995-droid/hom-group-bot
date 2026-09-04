@@ -448,9 +448,21 @@ def get_tasks(status_filter: str = "", from_today: bool = False) -> str:
         pr     = p["properties"]
         name   = title_of(pr)
         status = (pr.get("Status", {}).get("status") or {}).get("name", "")
-        dt     = date_val(pr, "Date")
+        dt_raw = date_val(pr, "Date")
         label  = (pr.get("Метки", {}).get("select") or {}).get("name", "")
-        row    = f"- {dt or '?'} | {name}"
+        # Форматируем дату/время красиво
+        if dt_raw:
+            try:
+                if "T" in dt_raw:
+                    dt_obj = datetime.fromisoformat(dt_raw)
+                    dt_fmt = dt_obj.strftime("%d.%m.%Y %H:%M")
+                else:
+                    dt_fmt = datetime.strptime(dt_raw, "%Y-%m-%d").strftime("%d.%m.%Y")
+            except Exception:
+                dt_fmt = dt_raw
+        else:
+            dt_fmt = "?"
+        row = f"- {dt_fmt} | {name}"
         if status: row += f" | {status}"
         if label:  row += f" | {label}"
         rows.append(row)
