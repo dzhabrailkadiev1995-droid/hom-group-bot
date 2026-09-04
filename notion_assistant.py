@@ -5,9 +5,17 @@ HOM Assistant — Telegram-бот с доступом к Notion через Claud
 
 import os, logging, time, json, requests, tempfile
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from dotenv import load_dotenv
 import anthropic
+
+MSK = timezone(timedelta(hours=3))
+
+def today_msk() -> date:
+    return datetime.now(MSK).date()
+
+def now_msk() -> datetime:
+    return datetime.now(MSK)
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -130,8 +138,8 @@ def get_works(object_name: str) -> str:
 
 
 def get_upcoming_deadlines(days: int = 7) -> str:
-    today = date.today().isoformat()
-    end   = (date.today() + timedelta(days=days)).isoformat()
+    today = today_msk().isoformat()
+    end   = (today_msk() + timedelta(days=days)).isoformat()
     r = n_post(f"databases/{DB_WORKS}/query", {
         "filter": {"and": [
             {"property": "Дата ", "date": {"on_or_after": today}},
@@ -156,10 +164,10 @@ def get_upcoming_deadlines(days: int = 7) -> str:
 
 
 def get_overdue_works() -> str:
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    yesterday = (today_msk() - timedelta(days=1)).isoformat()
     r = n_post(f"databases/{DB_WORKS}/query", {
         "filter": {"and": [
-            {"property": "Дата ", "date": {"before": date.today().isoformat()}},
+            {"property": "Дата ", "date": {"before": today_msk().isoformat()}},
             {"property": "Статус", "status": {"does_not_equal": "Готово"}},
             {"property": "Статус", "status": {"does_not_equal": "Пауза"}}
         ]},
@@ -210,7 +218,7 @@ def add_work_comment(work_name: str, object_name: str, comment: str) -> str:
     r = n_patch(f"blocks/{work_id}/children", {})  # just add paragraph block
     requests.patch(f"{N_API}/blocks/{work_id}/children", headers=N_HDR, json={
         "children": [{"type": "paragraph", "paragraph": {
-            "rich_text": [{"type": "text", "text": {"content": f"📝 {date.today()} — {comment}"}}]
+            "rich_text": [{"type": "text", "text": {"content": f"📝 {today_msk()} — {comment}"}}]
         }}]
     }, timeout=15)
     return f"✅ Комментарий добавлен к «{work_title}»"
@@ -249,7 +257,7 @@ def add_expense(object_name: str, amount: float, description: str, expense_type:
             "Name":        {"title": [{"type": "text", "text": {"content": description}}]},
             "Объект":      {"relation": [{"id": obj_id}]},
             "Сумма факт":  {"number": amount},
-            "Дата":        {"date": {"start": date.today().isoformat()}},
+            "Дата":        {"date": {"start": today_msk().isoformat()}},
             "Тип":         {"select": {"name": expense_type}},
             "Оплачен":     {"checkbox": True},
             "Примечание":  {"rich_text": [{"type": "text", "text": {"content": description}}]}
@@ -341,7 +349,7 @@ def create_lead(client_name: str, phone: str, source: str, object_type: str, are
         "Статус":         {"status": {"name": "Новый"}},
         "Источник":       {"select": {"name": source}},
         "Тип объекта":    {"select": {"name": object_type}},
-        "Дата обращения": {"date": {"start": date.today().isoformat()}}
+        "Дата обращения": {"date": {"start": today_msk().isoformat()}}
     }
     if phone:   props["Телефон"]      = {"phone_number": phone}
     if area:    props["Площадь (м²)"] = {"number": area}
@@ -401,8 +409,8 @@ def set_reminder(text: str, remind_at: str) -> str:
 
 def check_reminders():
     reminders = load_reminders()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    today = date.today().isoformat()
+    now = now_msk().strftime("%Y-%m-%d %H:%M")
+    today = today_msk().isoformat()
     changed = False
     for r in reminders:
         if r.get("sent"): continue
@@ -423,7 +431,7 @@ def check_reminders():
 # ─── Планы и задачи ────────────────────────────────────────────────────────────
 
 def get_tasks(status_filter: str = "", from_today: bool = False) -> str:
-    today = date.today().isoformat()
+    today = today_msk().isoformat()
     filters = []
     if status_filter:
         filters.append({"property": "Status", "status": {"equals": status_filter}})
@@ -568,7 +576,7 @@ TOOL_FN = {
 }
 
 def get_system():
-    today = date.today().isoformat()
+    today = today_msk().isoformat()
     return f"""Ты — личный ассистент Джабраила Кадиева, руководителя строительной компании HOM Group (Грозный, Чечня).
 
 СЕГОДНЯ: {today}. Эта дата актуальна и точна — игнорируй любые другие даты из истории переписки.
@@ -611,7 +619,7 @@ def ask_claude(chat_id: int, user_text: str) -> str:
     if chat_id not in history:
         history[chat_id] = load_history(chat_id, limit=30)
 
-    today_str = date.today().strftime("%d.%m.%Y")
+    today_str = today_msk().strftime("%d.%m.%Y")
     dated_text = f"[Сегодня: {today_str}]\n{user_text}"
     history[chat_id].append({"role": "user", "content": dated_text})
     save_message(chat_id, "user", user_text)
@@ -682,7 +690,7 @@ def handle_photo(msg: dict):
     file_path = info["result"]["file_path"]
     img_data  = requests.get(f"https://api.telegram.org/file/bot{TG_TOKEN}/{file_path}", timeout=30).content
 
-    ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts    = now_msk().strftime("%Y%m%d_%H%M%S")
     fname = f"photo_{ts}.jpg"
     PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
     dest  = PHOTOS_DIR / fname
@@ -696,8 +704,8 @@ def handle_photo(msg: dict):
 
 def maybe_morning_briefing():
     global last_briefing_day
-    today = date.today()
-    now   = datetime.now()
+    today = today_msk()
+    now   = now_msk()
     if last_briefing_day == today or not (8 <= now.hour < 9):
         return
     last_briefing_day = today
@@ -729,8 +737,8 @@ def maybe_morning_briefing():
 
 def maybe_evening_overdue():
     global last_evening_day
-    today = date.today()
-    now   = datetime.now()
+    today = today_msk()
+    now   = now_msk()
     if last_evening_day == today or not (18 <= now.hour < 19):
         return
     last_evening_day = today
@@ -742,8 +750,8 @@ def maybe_evening_overdue():
 
 def maybe_weekly_report():
     global last_weekly_monday
-    today = date.today()
-    now   = datetime.now()
+    today = today_msk()
+    now   = now_msk()
     if today.weekday() != 0 or last_weekly_monday == today or not (8 <= now.hour < 9):
         return
     last_weekly_monday = today
