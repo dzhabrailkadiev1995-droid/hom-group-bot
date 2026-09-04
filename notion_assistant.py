@@ -454,7 +454,8 @@ def get_tasks(status_filter: str = "", from_today: bool = False) -> str:
         if dt_raw:
             try:
                 if "T" in dt_raw:
-                    dt_obj = datetime.fromisoformat(dt_raw)
+                    dt_obj = datetime.fromisoformat(dt_raw.replace("Z", "+00:00"))
+                    dt_obj = dt_obj.astimezone(MSK)
                     dt_fmt = dt_obj.strftime("%d.%m.%Y %H:%M")
                 else:
                     dt_fmt = datetime.strptime(dt_raw, "%Y-%m-%d").strftime("%d.%m.%Y")
