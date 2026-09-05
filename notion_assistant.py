@@ -831,9 +831,9 @@ def main():
 
     while True:
         try:
-            maybe_morning_briefing()
-            maybe_evening_overdue()
-            maybe_weekly_report()
+            # maybe_morning_briefing()
+            # maybe_evening_overdue()
+            # maybe_weekly_report()
             check_reminders()
         except Exception as e:
             log.error(f"scheduled task error: {e}")
