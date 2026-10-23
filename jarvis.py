@@ -336,7 +336,7 @@ def get_tasks(status_filter: str = "", only_active: bool = True) -> str:
         rows.append(row)
     return "\n".join(rows) if rows else "Активных задач нет"
 
-def create_task(name: str, task_date: str = "", label: str = "", status: str = "Нужно сделать") -> str:
+def create_task(name: str, task_date: str = "", label: str = "", status: str = "Нужно сделать", description: str = "") -> str:
     props = {
         "Name":   {"title": [{"type": "text", "text": {"content": name}}]},
         "Status": {"status": {"name": status}},
@@ -347,7 +347,9 @@ def create_task(name: str, task_date: str = "", label: str = "", status: str = "
     if label:
         props["Метки"] = {"select": {"name": label}}
     r = p_post("pages", {"parent": {"database_id": DB_TASKS}, "properties": props})
-    return f"✅ Задача «{name}» создана" if "id" in r else f"Ошибка: {r.get('message')}"
+    if "id" not in r: return f"Ошибка: {r.get('message')}"
+    if description: set_page_text(r["id"], description)
+    return f"✅ Задача «{name}» создана"
 
 def update_task_status(task_name: str, new_status: str) -> str:
     task_id, task_title = find_task_id(task_name)
@@ -355,7 +357,7 @@ def update_task_status(task_name: str, new_status: str) -> str:
     p_patch(f"pages/{task_id}", {"properties": {"Status": {"status": {"name": new_status}}}})
     return f"✅ «{task_title}» → {new_status}"
 
-def update_task(task_name: str, new_name: str = "", task_date: str = "", label: str = "") -> str:
+def update_task(task_name: str, new_name: str = "", task_date: str = "", label: str = "", description: str = "") -> str:
     task_id, task_title = find_task_id(task_name)
     if not task_id: return f"Задача «{task_name}» не найдена"
     props = {}
@@ -364,8 +366,9 @@ def update_task(task_name: str, new_name: str = "", task_date: str = "", label: 
         dt_str = task_date.replace(" ", "T") + ":00+03:00" if " " in task_date else task_date
         props["Date"] = {"date": {"start": dt_str}}
     if label: props["Метки"] = {"select": {"name": label}}
-    if not props: return "Нечего обновлять — укажи new_name, task_date или label"
-    p_patch(f"pages/{task_id}", {"properties": props})
+    if props: p_patch(f"pages/{task_id}", {"properties": props})
+    if description: set_page_text(task_id, description)
+    if not props and not description: return "Нечего обновлять"
     return f"✅ «{task_title}» обновлена"
 
 def delete_task(task_name: str) -> str:
@@ -788,10 +791,11 @@ TOOLS = [
     {"name": "create_task",
      "description": "Создать задачу",
      "input_schema": {"type": "object", "properties": {
-         "name":      {"type": "string"},
-         "task_date": {"type": "string", "description": "YYYY-MM-DD"},
-         "label":     {"type": "string", "description": "Друзья / Здоровье / Личный бренд / Развитие / HOM Group / Академия / Маркетинг / Уход"},
-         "status":    {"type": "string", "description": "Нужно сделать / Сегодня / Запланированные / Идеи"}
+         "name":        {"type": "string"},
+         "task_date":   {"type": "string", "description": "YYYY-MM-DD"},
+         "label":       {"type": "string", "description": "Друзья / Здоровье / Личный бренд / Развитие / HOM Group / Академия / Маркетинг / Уход"},
+         "status":      {"type": "string", "description": "Нужно сделать / Сегодня / Запланированные / Идеи"},
+         "description": {"type": "string", "description": "Описание задачи (текст внутри карточки)"}
      }, "required": ["name"]}},
 
     {"name": "update_task_status",
@@ -806,12 +810,13 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"task_name": {"type": "string"}}, "required": ["task_name"]}},
 
     {"name": "update_task",
-     "description": "Изменить название, дату или метку задачи",
+     "description": "Изменить название, дату, метку или описание задачи",
      "input_schema": {"type": "object", "properties": {
-         "task_name":  {"type": "string"},
-         "new_name":   {"type": "string"},
-         "task_date":  {"type": "string", "description": "YYYY-MM-DD"},
-         "label":      {"type": "string"}
+         "task_name":   {"type": "string"},
+         "new_name":    {"type": "string"},
+         "task_date":   {"type": "string", "description": "YYYY-MM-DD"},
+         "label":       {"type": "string"},
+         "description": {"type": "string", "description": "Описание задачи"}
      }, "required": ["task_name"]}},
 
     {"name": "get_networking",
@@ -969,9 +974,9 @@ TOOLS = [
 TOOL_FN = {
     "get_planning_overview":    lambda i: get_planning_overview(),
     "get_tasks":                lambda i: get_tasks(i.get("status_filter",""), i.get("only_active", True)),
-    "create_task":              lambda i: create_task(i["name"], i.get("task_date",""), i.get("label",""), i.get("status","Нужно сделать")),
+    "create_task":              lambda i: create_task(i["name"], i.get("task_date",""), i.get("label",""), i.get("status","Нужно сделать"), i.get("description","")),
     "update_task_status":       lambda i: update_task_status(i["task_name"], i["new_status"]),
-    "update_task":              lambda i: update_task(i["task_name"], i.get("new_name",""), i.get("task_date",""), i.get("label","")),
+    "update_task":              lambda i: update_task(i["task_name"], i.get("new_name",""), i.get("task_date",""), i.get("label",""), i.get("description","")),
     "delete_task":              lambda i: delete_task(i["task_name"]),
     "get_networking":           lambda i: get_networking(i.get("circle","")),
     "add_to_networking":        lambda i: add_to_networking(i["name"], i["circle"], i["status"], i.get("business",""), i.get("phone","")),
