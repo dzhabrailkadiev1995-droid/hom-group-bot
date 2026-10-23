@@ -1079,7 +1079,7 @@ def ask_claude(chat_id: int, user_text: str, image_b64: str = "", image_mime: st
 
     for _ in range(8):
         resp = claude.messages.create(
-            model="claude-opus-4-7",
+            model="claude-sonnet-4-6",
             max_tokens=3000,
             system=get_system(),
             tools=TOOLS,
