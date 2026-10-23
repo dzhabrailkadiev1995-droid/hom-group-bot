@@ -994,11 +994,18 @@ def get_system():
 
 # ─── Claude agent ──────────────────────────────────────────────────────────────
 
-def ask_claude(chat_id: int, user_text: str) -> str:
+def ask_claude(chat_id: int, user_text: str, image_b64: str = "", image_mime: str = "image/jpeg") -> str:
     messages = load_history(chat_id)
 
     dated_text = f"[{today_msk().strftime('%d.%m.%Y')}] {user_text}"
-    messages.append({"role": "user", "content": dated_text})
+    if image_b64:
+        content = [
+            {"type": "image", "source": {"type": "base64", "media_type": image_mime, "data": image_b64}},
+            {"type": "text",  "text": dated_text},
+        ]
+    else:
+        content = dated_text
+    messages.append({"role": "user", "content": content})
     messages = messages[-MAX_HISTORY:]
 
     for _ in range(8):
@@ -1026,6 +1033,20 @@ def ask_claude(chat_id: int, user_text: str) -> str:
             save_history(chat_id, messages + [{"role": "assistant", "content": text}])
             return text
     return "Не удалось получить ответ"
+
+
+# ─── Photo ────────────────────────────────────────────────────────────────────
+
+def download_photo_b64(file_id: str) -> str:
+    try:
+        import base64
+        info = requests.get(f"{TG_API}/getFile", params={"file_id": file_id}, timeout=15).json()
+        file_path = info["result"]["file_path"]
+        data = requests.get(f"https://api.telegram.org/file/bot{TG_TOKEN}/{file_path}", timeout=30).content
+        return base64.b64encode(data).decode()
+    except Exception as e:
+        log.error(f"Photo download error: {e}")
+        return ""
 
 
 # ─── Voice ────────────────────────────────────────────────────────────────────
@@ -1126,24 +1147,31 @@ def main():
                 tg_send(chat_id, "Нет доступа")
                 continue
 
+            image_b64 = ""
+
             # Voice
             if "voice" in msg:
-                tg_send(chat_id, "Слушаю...")
                 text = transcribe_voice(msg["voice"]["file_id"])
                 log.info(f"Voice → {text[:80]}")
                 if text.startswith("["):
                     tg_send(chat_id, text)
                     continue
+            # Photo
+            elif "photo" in msg:
+                best = max(msg["photo"], key=lambda p: p["file_size"])
+                image_b64 = download_photo_b64(best["file_id"])
+                text = msg.get("caption", "Что на этом фото?").strip()
+                log.info(f"Photo received, caption: {text[:80]}")
             else:
                 text = msg.get("text", "").strip()
 
-            if not text:
+            if not text and not image_b64:
                 continue
 
             log.info(f"← {text[:100]}")
 
             try:
-                reply = ask_claude(chat_id, text)
+                reply = ask_claude(chat_id, text, image_b64)
                 tg_send(chat_id, reply)
             except Exception as e:
                 log.error(f"Claude error: {e}")
