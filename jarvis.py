@@ -1119,15 +1119,12 @@ def main():
                 continue
 
             log.info(f"← {text[:100]}")
-            typing_id = tg_send(chat_id, "...")
 
             try:
                 reply = ask_claude(chat_id, text)
-                tg_delete(chat_id, typing_id)
                 tg_send(chat_id, reply)
             except Exception as e:
                 log.error(f"Claude error: {e}")
-                tg_delete(chat_id, typing_id)
                 tg_send(chat_id, f"Ошибка: {e}")
 
         if not updates:
