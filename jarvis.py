@@ -616,6 +616,30 @@ def update_direction_status(direction_name: str, new_status: str) -> str:
             return f"✅ «{nm}» → {new_status}"
     return f"Направление «{direction_name}» не найдено"
 
+def get_page_text(page_id: str) -> str:
+    r = requests.get(f"{N_API}/blocks/{page_id}/children", headers=P_HDR, timeout=15).json()
+    lines = []
+    for block in r.get("results", []):
+        bt = block.get("type", "")
+        texts = block.get(bt, {}).get("rich_text", [])
+        line = "".join(t.get("plain_text", "") for t in texts)
+        if line: lines.append(line)
+    return "\n".join(lines)
+
+def set_page_text(page_id: str, text: str) -> bool:
+    # Удаляем старые блоки
+    r = requests.get(f"{N_API}/blocks/{page_id}/children", headers=P_HDR, timeout=15).json()
+    for block in r.get("results", []):
+        requests.delete(f"{N_API}/blocks/{block['id']}", headers=P_HDR, timeout=10)
+    # Пишем новый текст параграфами
+    paragraphs = [p for p in text.split("\n") if p.strip()]
+    children = [{"object": "block", "type": "paragraph",
+                 "paragraph": {"rich_text": [{"type": "text", "text": {"content": p}}]}}
+                for p in paragraphs[:100]]
+    res = requests.patch(f"{N_API}/blocks/{page_id}/children",
+                         headers=P_HDR, json={"children": children}, timeout=15)
+    return res.status_code == 200
+
 def get_ideas() -> str:
     r = p_post(f"databases/{DB_IDEAS}/query", {"page_size": 50})
     rows = []
@@ -623,18 +647,22 @@ def get_ideas() -> str:
         pr   = p["properties"]
         name = title_of(pr)
         real = num_val(pr, "Реализация")
+        desc = get_page_text(p["id"])
         row  = f"- {name}"
-        if real is not None: row += f" | реализация: {real}%"
+        if real is not None: row += f" | {real}%"
+        if desc: row += f"\n  {desc[:200]}"
         rows.append(row)
     return "\n".join(rows) if rows else "Идей нет"
 
-def add_idea(name: str, realization: int = None) -> str:
+def add_idea(name: str, realization: int = None, description: str = "") -> str:
     props = {"Name": {"title": [{"type": "text", "text": {"content": name}}]}}
     if realization is not None: props["Реализация"] = {"number": realization}
     r = p_post("pages", {"parent": {"database_id": DB_IDEAS}, "properties": props})
-    return f"✅ Идея «{name}» добавлена" if "id" in r else f"Ошибка: {r.get('message')}"
+    if "id" not in r: return f"Ошибка: {r.get('message')}"
+    if description: set_page_text(r["id"], description)
+    return f"✅ Идея «{name}» добавлена"
 
-def update_idea(idea_name: str, new_name: str = "", realization: int = None) -> str:
+def update_idea(idea_name: str, new_name: str = "", realization: int = None, description: str = "") -> str:
     r = p_post(f"databases/{DB_IDEAS}/query", {})
     for p in r.get("results", []):
         nm = title_of(p["properties"])
@@ -642,8 +670,9 @@ def update_idea(idea_name: str, new_name: str = "", realization: int = None) -> 
             props = {}
             if new_name: props["Name"] = {"title": [{"type": "text", "text": {"content": new_name}}]}
             if realization is not None: props["Реализация"] = {"number": realization}
-            if not props: return "Нечего обновлять"
-            p_patch(f"pages/{p['id']}", {"properties": props})
+            if props: p_patch(f"pages/{p['id']}", {"properties": props})
+            if description: set_page_text(p["id"], description)
+            if not props and not description: return "Нечего обновлять"
             return f"✅ Идея «{nm}» обновлена"
     return f"Идея «{idea_name}» не найдена"
 
@@ -912,15 +941,17 @@ TOOLS = [
      "description": "Добавить идею",
      "input_schema": {"type": "object", "properties": {
          "name":        {"type": "string"},
-         "realization": {"type": "integer", "description": "Процент реализации 0-100"}
+         "realization": {"type": "integer", "description": "Процент реализации 0-100"},
+         "description": {"type": "string", "description": "Описание идеи (текст страницы)"}
      }, "required": ["name"]}},
 
     {"name": "update_idea",
-     "description": "Обновить идею (название или процент реализации)",
+     "description": "Обновить идею (название, процент реализации или описание)",
      "input_schema": {"type": "object", "properties": {
          "idea_name":   {"type": "string"},
          "new_name":    {"type": "string"},
-         "realization": {"type": "integer"}
+         "realization": {"type": "integer"},
+         "description": {"type": "string", "description": "Описание идеи (текст страницы)"}
      }, "required": ["idea_name"]}},
 
     {"name": "delete_idea",
@@ -960,8 +991,8 @@ TOOL_FN = {
     "add_direction":            lambda i: add_direction(i["name"], i.get("status","Не запущено"), i.get("share"), i.get("launch_date",""), i.get("types",[])),
     "update_direction_status":  lambda i: update_direction_status(i["direction_name"], i["new_status"]),
     "get_ideas":                lambda i: get_ideas(),
-    "add_idea":                 lambda i: add_idea(i["name"], i.get("realization")),
-    "update_idea":              lambda i: update_idea(i["idea_name"], i.get("new_name",""), i.get("realization")),
+    "add_idea":                 lambda i: add_idea(i["name"], i.get("realization"), i.get("description","")),
+    "update_idea":              lambda i: update_idea(i["idea_name"], i.get("new_name",""), i.get("realization"), i.get("description","")),
     "delete_idea":              lambda i: delete_idea(i["idea_name"]),
     "set_reminder":             lambda i: set_reminder(i["text"], i["remind_at"]),
 }
