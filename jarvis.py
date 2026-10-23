@@ -1034,16 +1034,24 @@ def transcribe_voice(file_id: str) -> str:
 # ─── Telegram ──────────────────────────────────────────────────────────────────
 
 def tg_send(chat_id, text, parse_mode=None):
-    # Telegram лимит 4096 символов
     chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+    last_msg_id = None
     for chunk in chunks:
         params = {"chat_id": chat_id, "text": chunk}
         if parse_mode:
             params["parse_mode"] = parse_mode
         try:
-            requests.post(f"{TG_API}/sendMessage", json=params, timeout=20)
+            r = requests.post(f"{TG_API}/sendMessage", json=params, timeout=20)
+            last_msg_id = r.json().get("result", {}).get("message_id")
         except Exception as e:
             log.error(f"tg_send error: {e}")
+    return last_msg_id
+
+def tg_delete(chat_id, message_id):
+    try:
+        requests.post(f"{TG_API}/deleteMessage", json={"chat_id": chat_id, "message_id": message_id}, timeout=10)
+    except Exception:
+        pass
 
 def get_updates(offset=0):
     try:
@@ -1111,14 +1119,15 @@ def main():
                 continue
 
             log.info(f"← {text[:100]}")
-            tg_send(chat_id, "...")
+            typing_id = tg_send(chat_id, "...")
 
             try:
                 reply = ask_claude(chat_id, text)
-                # Удаляем сообщение "..."
+                tg_delete(chat_id, typing_id)
                 tg_send(chat_id, reply)
             except Exception as e:
                 log.error(f"Claude error: {e}")
+                tg_delete(chat_id, typing_id)
                 tg_send(chat_id, f"Ошибка: {e}")
 
         if not updates:
