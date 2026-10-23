@@ -1079,6 +1079,9 @@ def main():
             pass
     PID_FILE.write_text(str(os.getpid()))
 
+    # Сбрасываем очередь обновлений — защита от двойной обработки при редеплое
+    requests.get(f"{TG_API}/deleteWebhook", params={"drop_pending_updates": True}, timeout=10)
+
     log.info("JARVIS запущен")
     tg_send(OWNER_ID, "JARVIS онлайн. Готов к работе.")
 
