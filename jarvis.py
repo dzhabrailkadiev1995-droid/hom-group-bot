@@ -4,7 +4,7 @@ JARVIS — личный стратегический ассистент Джаб
 Полный доступ к Notion: планирование, нетворкинг, партнерства, объекты, задачи, лиды
 """
 
-import os, logging, time, json, requests, tempfile
+import os, logging, time, json, requests, tempfile, redis as redis_lib
 from pathlib import Path
 from datetime import datetime, date, timedelta, timezone
 from dotenv import load_dotenv
@@ -73,8 +73,29 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-claude  = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
-history = {}
+claude = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+
+# Redis для персистентной истории диалога
+_redis_url = os.environ.get("REDIS_URL", "")
+_redis = redis_lib.from_url(_redis_url) if _redis_url else None
+HISTORY_KEY = "jarvis:history:{chat_id}"
+MAX_HISTORY  = 40  # последние 40 сообщений (~20 обменов)
+
+def load_history(chat_id: int) -> list:
+    if _redis:
+        try:
+            data = _redis.get(HISTORY_KEY.format(chat_id=chat_id))
+            return json.loads(data) if data else []
+        except Exception:
+            pass
+    return []
+
+def save_history(chat_id: int, messages: list):
+    if _redis:
+        try:
+            _redis.set(HISTORY_KEY.format(chat_id=chat_id), json.dumps(messages, ensure_ascii=False))
+        except Exception:
+            pass
 
 
 # ─── Notion helpers ────────────────────────────────────────────────────────────
@@ -974,12 +995,11 @@ def get_system():
 # ─── Claude agent ──────────────────────────────────────────────────────────────
 
 def ask_claude(chat_id: int, user_text: str) -> str:
-    if chat_id not in history:
-        history[chat_id] = []
+    messages = load_history(chat_id)
 
     dated_text = f"[{today_msk().strftime('%d.%m.%Y')}] {user_text}"
-    history[chat_id].append({"role": "user", "content": dated_text})
-    messages = history[chat_id][-20:]
+    messages.append({"role": "user", "content": dated_text})
+    messages = messages[-MAX_HISTORY:]
 
     for _ in range(8):
         resp = claude.messages.create(
@@ -1003,7 +1023,7 @@ def ask_claude(chat_id: int, user_text: str) -> str:
             ]
         else:
             text = "".join(b.text for b in resp.content if hasattr(b, "text"))
-            history[chat_id] = messages + [{"role": "assistant", "content": text}]
+            save_history(chat_id, messages + [{"role": "assistant", "content": text}])
             return text
     return "Не удалось получить ответ"
 
